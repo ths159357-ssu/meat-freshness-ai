@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>육류 신선도 판단</title>
+<meta name="description" content="센서 데이터(엑셀)를 넣으면 1D-CNN 기반 AI 모델이 신선 / 비교적 신선 / 부패를 판단합니다.">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--bg:#ffffff;--ink:#1b2631;--sub:#6c7a89;--line:#d6e6e1;--soft:#eef4f2;--brand:#0f3d3e;--acc:#1f8a70;
+      --fresh:#1f8a70;--mid:#e39b2d;--bad:#c8394f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;line-height:1.5}
+main{max-width:560px;margin:0 auto;padding:20px 16px 40px}
+header h1{margin:0;font-size:24px;color:var(--brand);letter-spacing:-.5px}
+header p{margin:4px 0 0;color:var(--sub);font-size:14px}
+.card{border:1px solid var(--line);border-radius:14px;padding:16px;margin-top:16px;background:#fff}
+.card h2{margin:0 0 10px;font-size:15px;color:var(--brand)}
+.result{text-align:center;padding:22px 16px}
+.badge{display:inline-block;min-width:180px;padding:14px 24px;border-radius:999px;color:#fff;font-size:30px;font-weight:800;letter-spacing:-.5px;background:#9aa5b1}
+.badge.g0{background:var(--fresh)}.badge.g1{background:var(--mid)}.badge.g2{background:var(--bad)}
+.result .meta{margin-top:10px;color:var(--sub);font-size:13px}
+.bars{margin-top:14px;text-align:left}
+.bar{display:grid;grid-template-columns:84px 1fr 52px;align-items:center;gap:8px;font-size:13px;margin:6px 0}
+.bar .track{height:10px;background:var(--soft);border-radius:6px;overflow:hidden}
+.bar .fill{height:100%;border-radius:6px}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+button,.file{font:inherit;font-size:14px;border-radius:10px;padding:11px 10px;cursor:pointer;border:1px solid var(--line);background:var(--soft);color:var(--ink)}
+button:hover,.file:hover{border-color:var(--acc)}
+button.on{outline:2px solid var(--acc)}
+.file{display:block;text-align:center;background:var(--brand);color:#fff;border-color:var(--brand);margin-top:10px}
+.file input{display:none}
+.small{font-size:12.5px;color:var(--sub)}
+.link{background:none;border:none;color:var(--acc);text-decoration:underline;padding:0;font-size:12.5px}
+table.parts{width:100%;border-collapse:collapse;font-size:13px}
+table.parts td,table.parts th{padding:6px 4px;white-space:nowrap;border-bottom:1px solid var(--soft);text-align:right}
+table.parts td:first-child,table.parts th:first-child{text-align:left;white-space:normal}
+table.parts small{color:var(--sub);font-size:11px}
+.err{color:var(--bad);font-size:13px;margin-top:8px}
+svg text{font-family:inherit}
+footer{margin-top:22px;font-size:12px;color:var(--sub)}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>육류 신선도 판단</h1>
+    <p>전자코 센서 기록을 넣으면 AI 모델이 신선도를 3등급으로 판단합니다.</p>
+  </header>
+
+  <section class="card result" id="resultCard" aria-live="polite">
+    <div class="badge" id="badge">대기 중</div>
+    <div class="meta" id="meta">아래에서 예시 데이터를 고르거나 엑셀 파일을 넣어 주세요.</div>
+    <div class="bars" id="bars"></div>
+  </section>
+
+  <section class="card">
+    <h2>1. 예시 데이터로 판단하기</h2>
+    <div class="btns" id="sampleBtns"></div>
+    <p class="small" id="sampleNote"></p>
+  </section>
+
+  <section class="card">
+    <h2>2. 엑셀 파일로 판단하기</h2>
+    <p class="small">필요한 열: <b>Minute</b>(경과 분), <b>MQ135, MQ3, MQ4, MQ8</b>(센서 저항값), <b>Temperature</b>(°C).
+      첫 10행은 보관을 시작한 첫 10분 기록이어야 하고, 그 뒤에는 판단할 구간을 1분 간격으로 넣습니다(최대 720분 = 12시간).
+      마지막 행 시점의 상태를 판단합니다.</p>
+    <button class="link" id="tplBtn" type="button">입력 양식(엑셀) 내려받기</button>
+    <label class="file">엑셀 / CSV 파일 선택<input type="file" id="fileIn" accept=".xlsx,.xls,.csv"></label>
+    <div class="err" id="err"></div>
+  </section>
+
+  <section class="card" id="detailCard" hidden>
+    <h2>판단 과정</h2>
+    <svg id="chart" viewBox="0 0 520 190" width="100%" role="img" aria-label="센서 변화 그래프"></svg>
+    <p class="small" style="margin:4px 0 10px">보관 시작 10분 대비 센서 저항 변화(로그). 부패 가스가 늘면 값이 크게 움직입니다.</p>
+    <table class="parts" id="parts"></table>
+    <p class="small" style="margin-top:8px">세 모델의 확률을 평균해 판단하고, 더 높은 등급이 10분 연속일 때만 등급을 올립니다.</p>
+  </section>
+
+  <footer>
+    4조 · 기초공학설계 · 육류 신선도 판단 AI 모델<br>
+    하드웨어 측정값이 아니라 공개 전자코 데이터의 일부 구간을 넣어 판단 기능을 시연합니다.
+    학습 데이터: Wijaya 외(2018) TS1~5 + Wijaya 외(2022) 1~8번 부위 · 시연 데이터: <span id="srcNote"></span>
+  </footer>
+</main>
+
+<script>/*__ENGINE__*/</script>
+<script>
+const MODEL = /*__MODEL__*/;
+const SAMPLES = /*__SAMPLES__*/;
+const COLORS = ["#1f8a70", "#e39b2d", "#c8394f"];
+const $ = id => document.getElementById(id);
+
+function reset(msg) {
+  $("err").textContent = msg; $("badge").className = "badge"; $("badge").textContent = "판단 불가";
+  $("meta").textContent = "입력 파일을 확인해 주세요."; $("bars").innerHTML = ""; $("detailCard").hidden = true;
+}
+function show(rows, title) {
+  $("err").textContent = "";
+  if (rows.length < 20) { reset("데이터가 너무 짧습니다. 최소 20행 이상 넣어 주세요."); return; }
+  const R = SpoilageEngine.judge(MODEL, rows);
+  const b = $("badge"); b.className = "badge g" + R.grade; b.textContent = R.className;
+  const m = R.minutes[R.minutes.length - 1];
+  $("meta").innerHTML = `${title}<br>판단 시점: 보관 ${m.toLocaleString()}분 (약 ${(m / 60).toFixed(1)}시간) · 입력 ${R.n.toLocaleString()}행`;
+  $("bars").innerHTML = MODEL.classes.map((c, k) =>
+    `<div class="bar"><span>${c}</span><div class="track"><div class="fill" style="width:${(R.prob[k] * 100).toFixed(1)}%;background:${COLORS[k]}"></div></div><span>${(R.prob[k] * 100).toFixed(1)}%</span></div>`).join("");
+  const P = R.parts, f = v => (v * 100).toFixed(1) + "%";
+  $("parts").innerHTML = `<tr><th>모델</th>${MODEL.classes.map(c => `<th>${c}</th>`).join("")}</tr>` +
+    [["1D-CNN<br><small>센서 12시간 패턴</small>", P.cnn], ["성장 모델<br><small>온도 누적 지표</small>", P.lr], ["센서 수준<br><small>+ 온도 지표</small>", P.hgb], ["평균", R.prob]]
+      .map(([n, p]) => `<tr><td>${n}</td>${p.map(v => `<td>${f(v)}</td>`).join("")}</tr>`).join("");
+  drawChart(rows);
+  $("detailCard").hidden = false;
+  $("resultCard").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function drawChart(rows) {
+  const all = rows.slice().sort((a, b) => a.Minute - b.Minute), xa = SpoilageEngine.preprocess(MODEL, all);
+  const k0 = all.length > 10 && all[10].Minute - all[9].Minute > 1 ? 10 : 0;   // 기준 10분과 판단 구간이 떨어져 있으면 판단 구간만 그림
+  const s = all.slice(k0), x = xa.slice(k0);
+  const W = 520, H = 190, L = 40, Rr = 92, T = 12, B = 30, mins = s.map(r => r.Minute);
+  const lo = Math.min(0, ...x.flat()), hi = Math.max(0, ...x.flat()), m0 = mins[0], m1 = mins[mins.length - 1];
+  const X = m => L + (m - m0) / Math.max(m1 - m0, 1) * (W - L - Rr), Y = v => T + (hi - v) / Math.max(hi - lo, 1e-6) * (H - T - B);
+  const cols = ["#0f3d3e", "#1f8a70", "#3a7ca5", "#e39b2d"];
+  let g = `<line x1="${L}" x2="${W - Rr}" y1="${Y(0)}" y2="${Y(0)}" stroke="#d6e6e1"/>`;
+  g += `<text x="${L - 6}" y="${Y(hi) + 4}" font-size="11" text-anchor="end" fill="#6c7a89">${hi.toFixed(1)}</text><text x="${L - 6}" y="${Y(lo) + 4}" font-size="11" text-anchor="end" fill="#6c7a89">${lo.toFixed(1)}</text>`;
+  g += `<text x="${L}" y="${H - 8}" font-size="11" fill="#6c7a89">${m0}분</text><text x="${W - Rr}" y="${H - 8}" font-size="11" text-anchor="end" fill="#6c7a89">${m1}분</text>`;
+  const ly = MODEL.sensors.map((_, c) => ({ c, y: Y(x[x.length - 1][c]) })).sort((p, q) => p.y - q.y);
+  ly.forEach((o, i) => { if (i && o.y - ly[i - 1].y < 13) o.y = ly[i - 1].y + 13; });   // 이름표 겹침 방지
+  const labelY = {}; ly.forEach(o => (labelY[o.c] = o.y));
+  MODEL.sensors.forEach((sn, c) => {
+    let d = "", prev = null;
+    s.forEach((r, i) => { const gap = prev !== null && r.Minute - prev > 1; d += (i === 0 || gap ? "M" : "L") + X(r.Minute).toFixed(1) + " " + Y(x[i][c]).toFixed(1); prev = r.Minute; });
+    g += `<path d="${d}" fill="none" stroke="${cols[c]}" stroke-width="1.6"/>`;
+    const yl = labelY[c];
+    g += `<text x="${W - Rr + 6}" y="${yl + 4}" font-size="11.5" fill="${cols[c]}">${sn}</text>`;
+  });
+  $("chart").innerHTML = g;
+}
+
+function tableToRows(table, title) {
+  const { rows, missing } = SpoilageEngine.rowsFromTable(MODEL, table);
+  if (missing.length) { reset("열을 찾을 수 없습니다: " + missing.join(", ")); return; }
+  show(rows, title);
+}
+
+// 예시 데이터 버튼
+SAMPLES.items.forEach((s, i) => {
+  const btn = document.createElement("button"); btn.type = "button"; btn.textContent = s.label;
+  btn.onclick = () => {
+    document.querySelectorAll("#sampleBtns button").forEach(b => b.classList.remove("on")); btn.classList.add("on");
+    const rows = s.data.map(r => Object.fromEntries(s.cols.map((c, j) => [c, r[j]])));
+    show(rows, `${s.label} · ${s.source}`);
+  };
+  $("sampleBtns").appendChild(btn);
+});
+$("sampleNote").textContent = SAMPLES.note;
+$("srcNote").textContent = SAMPLES.source;
+
+// 엑셀 업로드
+$("fileIn").addEventListener("change", e => {
+  const f = e.target.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      const wb = XLSX.read(new Uint8Array(rd.result), { type: "array" });
+      const sh = wb.Sheets[wb.SheetNames[0]];
+      tableToRows(XLSX.utils.sheet_to_json(sh, { defval: null }), f.name);
+    } catch (er) { reset("파일을 읽지 못했습니다: " + er.message); }
+  };
+  rd.readAsArrayBuffer(f); e.target.value = "";
+});
+
+// 입력 양식 내려받기
+$("tplBtn").onclick = () => {
+  const head = ["Minute", "MQ135", "MQ3", "MQ4", "MQ8", "Temperature"];
+  const ex = SAMPLES.items[0], rows = ex.data.slice(0, 15).map(r => head.map(h => r[ex.cols.indexOf(h)]));
+  const ws = XLSX.utils.aoa_to_sheet([head].concat(rows));
+  const info = XLSX.utils.aoa_to_sheet([["작성 방법"],
+    ["1. 첫 시트에 Minute, MQ135, MQ3, MQ4, MQ8, Temperature 열을 둡니다."],
+    ["2. 첫 10행: 보관을 시작한 첫 10분(1~10분) 기록 → 센서 기준값으로 쓰입니다."],
+    ["3. 그 다음 행부터: 판단하고 싶은 구간을 1분 간격으로 넣습니다(최대 720행 = 12시간)."],
+    ["4. 마지막 행 시점의 상태(신선 / 비교적 신선 / 부패)를 판단합니다."],
+    ["5. 센서 값은 저항값 그대로 넣습니다. 온도를 모르면 보관 온도(예: 29)를 같은 값으로 채웁니다."]]);
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "입력"); XLSX.utils.book_append_sheet(wb, info, "작성방법");
+  XLSX.writeFile(wb, "신선도_입력양식.xlsx");
+};
+</script>
+</body>
+</html>
