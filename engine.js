@@ -28,11 +28,15 @@
   function growthTT(M, rows) {
     const rate = T => Math.pow(M.growth_b * Math.max(T - M.growth_tmin, 0), 2) / 60;
     const tt = new Array(rows.length);
-    let acc = rate(rows[0].Temperature);
+    // 첫 행: 보관 시작부터 첫 기록까지(1분 간격 데이터면 1분)
+    let acc = rate(rows[0].Temperature) * Math.max(rows[0].Minute, 1);
     tt[0] = acc;
     for (let i = 1; i < rows.length; i++) {
+      // 측정 간격 g분(1분이 아니어도 됨, 소수 가능): 온도를 직선으로 이어 1분씩 더하고 남는 몫은 끝 온도로 더함
       const g = rows[i].Minute - rows[i - 1].Minute, T0 = rows[i - 1].Temperature, T1 = rows[i].Temperature;
-      for (let k = 1; k <= g; k++) acc += rate(T0 + (T1 - T0) * k / g);
+      const n = Math.floor(g);
+      for (let k = 1; k <= n; k++) acc += rate(T0 + (T1 - T0) * k / g);
+      acc += (g - n) * rate(T1);
       tt[i] = acc;
     }
     return tt.map(v => v / Math.log(10));   // 학습 코드처럼 누적 후 ln10으로 나눔

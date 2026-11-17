@@ -63,8 +63,8 @@ footer{margin-top:22px;font-size:12px;color:var(--sub)}
   <section class="card">
     <h2>2. 엑셀 파일로 판단하기</h2>
     <p class="small">필요한 열: <b>Minute</b>(경과 분), <b>MQ135, MQ3, MQ4, MQ8</b>(센서 저항값), <b>Temperature</b>(°C).
-      첫 10행은 보관을 시작한 첫 10분 기록이어야 하고, 그 뒤에는 판단할 구간을 1분 간격으로 넣습니다(최대 720분 = 12시간).
-      마지막 행 시점의 상태를 판단합니다.</p>
+      첫 10행은 보관을 막 시작했을 때의 기록(센서 기준값)이고, 그 뒤에는 판단할 구간을 일정한 간격으로 넣습니다(최대 720행).
+      Minute는 보관 시작부터 지난 시간(분)이며, 냉장 데이터처럼 측정 간격이 1분이 아니어도 됩니다. 마지막 행 시점의 상태를 판단합니다.</p>
     <button class="link" id="tplBtn" type="button">입력 양식(엑셀) 내려받기</button>
     <label class="file">엑셀 / CSV 파일 선택<input type="file" id="fileIn" accept=".xlsx,.xls,.csv"></label>
     <div class="err" id="err"></div>
@@ -75,7 +75,8 @@ footer{margin-top:22px;font-size:12px;color:var(--sub)}
     <svg id="chart" viewBox="0 0 520 190" width="100%" role="img" aria-label="센서 변화 그래프"></svg>
     <p class="small" style="margin:4px 0 10px">보관 시작 10분 대비 센서 저항 변화(로그). 부패 가스가 늘면 값이 크게 움직입니다.</p>
     <table class="parts" id="parts"></table>
-    <p class="small" style="margin-top:8px">세 모델의 확률을 평균해 판단하고, 더 높은 등급이 10분 연속일 때만 등급을 올립니다.</p>
+    <p class="small" style="margin-top:8px">세 모델의 확률을 평균해 판단하고, 더 높은 등급이 10회 연속일 때만 등급을 올립니다.</p>
+    <p class="small">냉장 기준 데이터: 상온(약 29 °C) 실험 데이터의 센서 값은 그대로 두고, 성장 제곱근 모델로 시간을 냉장(4 °C) 기준으로 늘린 환산 데이터입니다. 배율 [(29+5)÷(4+5)]² ≈ 14.3배. 실제 냉장고 측정값이 아닌 추정이며, 냉장 기간이 길게 계산될 수 있습니다.</p>
   </section>
 
   <footer>
@@ -102,7 +103,12 @@ function show(rows, title) {
   const R = SpoilageEngine.judge(MODEL, rows);
   const b = $("badge"); b.className = "badge g" + R.grade; b.textContent = R.className;
   const m = R.minutes[R.minutes.length - 1];
-  $("meta").innerHTML = `${title}<br>판단 시점: 보관 ${m.toLocaleString()}분 (약 ${(m / 60).toFixed(1)}시간) · 입력 ${R.n.toLocaleString()}행`;
+  const srt = rows.slice().sort((a, b) => a.Minute - b.Minute);
+  const avgT = srt.reduce((a, r) => a + r.Temperature, 0) / srt.length;
+  const gap = (srt[srt.length - 1].Minute - srt[srt.length - 2].Minute);
+  const when = m >= 2880 ? `${(m / 1440).toFixed(1)}일` : `${(m / 60).toFixed(1)}시간`;
+  const place = avgT <= 10 ? `냉장 ${avgT.toFixed(0)} °C` : `${avgT.toFixed(0)} °C`;
+  $("meta").innerHTML = `${title}<br>판단 시점: <b>${place} 보관 ${when}</b> (${Math.round(m).toLocaleString()}분)<br>입력 ${R.n.toLocaleString()}행 · 측정 간격 약 ${gap.toFixed(1)}분`;
   $("bars").innerHTML = MODEL.classes.map((c, k) =>
     `<div class="bar"><span>${c}</span><div class="track"><div class="fill" style="width:${(R.prob[k] * 100).toFixed(1)}%;background:${COLORS[k]}"></div></div><span>${(R.prob[k] * 100).toFixed(1)}%</span></div>`).join("");
   const P = R.parts, f = v => (v * 100).toFixed(1) + "%";
@@ -178,10 +184,11 @@ $("tplBtn").onclick = () => {
   const ws = XLSX.utils.aoa_to_sheet([head].concat(rows));
   const info = XLSX.utils.aoa_to_sheet([["작성 방법"],
     ["1. 첫 시트에 Minute, MQ135, MQ3, MQ4, MQ8, Temperature 열을 둡니다."],
-    ["2. 첫 10행: 보관을 시작한 첫 10분(1~10분) 기록 → 센서 기준값으로 쓰입니다."],
-    ["3. 그 다음 행부터: 판단하고 싶은 구간을 1분 간격으로 넣습니다(최대 720행 = 12시간)."],
+    ["2. 첫 10행: 보관을 막 시작했을 때의 기록 → 센서 기준값으로 쓰입니다."],
+    ["3. 그 다음 행부터: 판단하고 싶은 구간을 일정한 간격으로 넣습니다(최대 720행). Minute = 보관 시작부터 지난 분."],
     ["4. 마지막 행 시점의 상태(신선 / 비교적 신선 / 부패)를 판단합니다."],
-    ["5. 센서 값은 저항값 그대로 넣습니다. 온도를 모르면 보관 온도(예: 29)를 같은 값으로 채웁니다."]]);
+    ["5. 센서 값은 저항값 그대로 넣습니다. Temperature는 보관 온도(냉장이면 4)입니다."],
+    ["6. 예시는 상온(29 °C) 실험 데이터를 성장 제곱근 모델로 냉장(4 °C) 기준으로 환산한 것입니다(시간 × 14.27)."]]);
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "입력"); XLSX.utils.book_append_sheet(wb, info, "작성방법");
   XLSX.writeFile(wb, "신선도_입력양식.xlsx");
 };

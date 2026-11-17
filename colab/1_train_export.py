@@ -73,12 +73,12 @@ def growth_tt(T, minutes=None):
        중간에 빠진 분이 있으면(일부 구간만 넣은 엑셀) 온도를 직선으로 이어 그 분만큼 더함 → 앱과 같은 계산"""
     rate = lambda t: (GROWTH_B * np.clip(np.asarray(t, float) - GROWTH_TMIN, 0, None)) ** 2 / 60.0
     T = np.asarray(T, float)
-    if minutes is None or np.all(np.diff(minutes) == 1):
+    if minutes is None or (np.all(np.diff(minutes) == 1) and minutes[0] == 1):
         return np.cumsum(rate(T)) / np.log(10)
-    out, acc = np.empty(len(T)), rate(T[0]); out[0] = acc
+    out, acc = np.empty(len(T)), rate(T[0]) * max(minutes[0], 1); out[0] = acc
     for i in range(1, len(T)):
-        g = int(minutes[i] - minutes[i - 1])
-        acc += rate(T[i - 1] + (T[i] - T[i - 1]) * np.arange(1, g + 1) / g).sum()
+        g = float(minutes[i] - minutes[i - 1]); n = int(np.floor(g))   # 측정 간격(분, 소수 가능)
+        acc += rate(T[i - 1] + (T[i] - T[i - 1]) * np.arange(1, n + 1) / g).sum() + (g - n) * rate(T[i])
         out[i] = acc
     return out / np.log(10)
 
